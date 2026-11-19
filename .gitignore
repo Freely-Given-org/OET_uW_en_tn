@@ -221,3 +221,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# OBD writes its cached (pickled) copies of these notes here
+*.pickle
