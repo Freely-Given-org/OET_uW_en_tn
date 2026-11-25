@@ -7,12 +7,12 @@ These adaptations are released under the same licence.
 
 ## Changes made
 
-These changes were made automatically by `adapt_uW_en_tn.py` (version 0.11)
+These changes were made automatically by `adapt_uW_en_tn.py` (version 0.50)
 to match the [Open English Translation](https://github.com/Freely-Given-org/OpenEnglishTranslation--OET) Readers’ Version (OET-RV):
 
-- In the Note column, the OET-RV form of each name (from `OET-RV_names_table.tsv`) is given in parentheses
+- In the Note column, the OET-RV form of each name (from `OET-RV_names_table.tsv`) is given after a slash
   after the first use of the traditional name in each note (and again after about 10 lines of a long note),
-  e.g., ‘Samuel (Shmuel)’ then just ‘Samuel’. (The traditional names are kept because the notes refer to the ULT and UST.)
+  e.g., ‘Samuel/Shmuel’ then just ‘Samuel’. (The traditional names are kept because the notes refer to the ULT and UST.)
 - Other OET-RV wording was added in parentheses after the first use of their term in each note, e.g., ‘the LORD (Yahweh)’:
   - LORD → Yahweh
 

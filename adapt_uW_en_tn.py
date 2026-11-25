@@ -20,7 +20,7 @@ Steps:
     1/ Delete and freshly re-copy the tn_*.tsv files (and the manifest, etc.) from the parent folder.
     2/ In the Note column only, add the OET-RV name (from OET-RV_names_table.tsv) after the traditional name
         on its first use in each note (and again after EXPLAIN_WINDOW lines of a long note),
-        e.g., 'Samuel' -> 'Samuel (Shmuel)' then just 'Samuel', because the notes refer to the names in the ULT/UST.
+        e.g., 'Samuel' -> 'Samuel/Shmuel' then just 'Samuel', because the notes refer to the names in the ULT/UST.
         Link targets (e.g., '](../01/01.md)' and 'rc://…' support references) and the original-language Quote column aren't changed,
         nor are Bible book names in references like 'John 1:19', or text quoted from other Bible versions, e.g., '“…” (NIV)'.
     3/ Write ADAPTATION_NOTICE.md (required by CC BY-SA) and adaptation_log.tsv.
@@ -32,6 +32,8 @@ CHANGELOG:
     2026-11-19 First version
     2026-11-20 Keep the uW name and add the OET-RV name after it, e.g., 'Samuel (Shmuel)';
                 and likewise for terms, e.g., 'the LORD (Yahweh)'; leave text quoted from other Bible versions unchanged
+    2026-11-22 Update the shared OET-RV names code block for the names table changes (rows repeated for each OT/NT/DC segment, 'Explained' Y flag became 'CanonicalExplanation')
+    2026-11-22 Explain names with the OET-RV names table 'NotesExplanation' (not the Greek forms used in the OET-RV ESFM files), and use a slash rather than parentheses, e.g., 'Shmuel/Samuel' or 'Samuel/Shmuel'; treat a slashed source alternative like a parenthesised one, e.g., 'Xerxes/Ahasuerus'; don't change names inside a replaced source explanation, e.g., 'Ahasuerus (Xerxes)'
 """
 from collections import Counter, defaultdict
 from csv import DictReader
@@ -42,9 +44,9 @@ import shutil
 import sys
 
 
-LAST_MODIFIED_DATE = '2026-11-20' # by RJH
+LAST_MODIFIED_DATE = '2026-11-22' # by RJH
 PROGRAM_NAME = "Adapt unfoldingWord Translation Notes for OET-RV"
-PROGRAM_VERSION = '0.11'
+PROGRAM_VERSION = '0.50'
 
 THIS_FOLDER = Path(__file__).resolve().parent
 SOURCE_FOLDER = THIS_FOLDER.parent # The original en_tn repo
@@ -55,7 +57,7 @@ NAMES_TABLE_FILEPATH = OET_RV_FOLDER / 'OET-RV_names_table.tsv'
 OWN_VERSIONS = {'ULT', 'UST', 'ULB', 'UDB'} # The notes refer to these (so quotes from them aren't protected like other versions)
 
 EXPLAIN_WINDOW = 10 # Re-explain a name if it was last explained more than this many lines earlier (in the same note)
-EXPLAIN_ONLY_FLAGGED_NAMES = False # True = only explain names with Explained=Y in the names table
+EXPLAIN_ONLY_FLAGGED_NAMES = False # True = only explain names with a CanonicalExplanation in the names table
 MAX_TRADITIONAL_FRACTION = 0.2 # Don't change a name if the OET-RV text itself uses the traditional form more than this fraction of the time
 
 # Traditional names that are also common English words or otherwise unsafe to change automatically
@@ -94,6 +96,7 @@ NOTE_COLUMN, NUM_COLUMNS = 6, 7 # Reference	ID	Tags	SupportReference	Quote	Occur
 POSSESSIVE_RE = re.compile(r"(?:[’']s\b|[’'](?= [a-z]))") # ’s or (after s) a bare ’ followed by a lower-case word
 BOOK_REFERENCE_AFTER_RE = re.compile(r'\s\d{1,3}(?=[:.,;–\-)\]\s]|$)') # e.g., the ' 1' in 'John 1:19' (the name is a Bible book)
 BOOK_NUMBER_BEFORE_RE = re.compile(r'(?:^|\W)[1-4]\s$') # e.g., the '1 ' in '1 John'
+ALTERNATIVE_NAME_RE = re.compile(r" \(([\w’' -]+)\)|/([A-Z][\w’'-]*)") # e.g., the ' (Xerxes)' in 'Ahasuerus (Xerxes)' or the '/Ahasuerus' in 'Xerxes/Ahasuerus'
 NUMBERED_BOOK_NAMES = {'Samuel', 'John', 'Peter', 'Esdras', 'Ezra'} # Names that are also numbered Bible books, e.g., '2 Samuel'
 
 # Text quoted from (or attributed to) these Bible versions is never changed, e.g., '“For God so loved…” (NIV)'
@@ -244,26 +247,18 @@ def restoreSpans(text:str, saved:list[str]) -> str:
 # end of restoreSpans
 
 
-def harvestEsfmExplanations() -> tuple[dict[str,Counter],Counter]:
+def countEsfmWords() -> Counter:
     """
-    Scan the OET-RV ESFM files for name explanations like 'Yeshua \\add !(Jesus; Grk. Yesus)\\add*'
-        so that we can imitate the way each name is most commonly explained.
+    Count how often each capitalised word (or hyphenated word) is used in the OET-RV text
+        (outside of name explanations like 'Yeshua \\add !(Jesus)\\add*'),
+        so we can tell if the OET-RV actually keeps a traditional name.
 
-    Also counts how often each capitalised word (or hyphenated word) is used in the OET-RV text
-        (outside of explanations), so we can tell if the OET-RV actually keeps a traditional name.
-
-    Returns a dict with RV names as keys, and counters of the explanation (inside the parentheses) as values,
-        plus a counter of words used in the OET-RV text.
+    Returns a counter of words used in the OET-RV text.
     """
-    explanations, wordCounts = defaultdict(Counter), Counter()
+    wordCounts = Counter()
     explanationRE = re.compile(r"([A-Z][\w’'-]*)(?:\\\+?add\*)? \\\+?add !\(([^)]+)\)")
     for filepath in sorted(OET_RV_FOLDER.glob('OET-RV_*.ESFM')):
         text = re.sub(r'¦\d+', '', filepath.read_text(encoding='utf-8'))
-        for match in explanationRE.finditer(text):
-            rvName, explanation = match.group(1), match.group(2)
-            if rvName[-2:] in ("'s",'’s'): # Ignore possessives (they're handled by our code)
-                continue
-            explanations[rvName][explanation] += 1
         # Now count words in the Bible text only (not in introductions, headings, comments, or footnotes)
         text = '\n'.join(line for line in text.splitlines()
                             if not re.match(r'\\(rem|i[a-z]*|li\d?|mt\d?|toc\d|h|id|usfm|ide|s\d?|r|d|ms\d?|mr|sr|cl)\b', line))
@@ -273,12 +268,12 @@ def harvestEsfmExplanations() -> tuple[dict[str,Counter],Counter]:
         text = re.sub(r"[\w’']+/ ?([\w’']+)", r'\1', text) # Remove slashed explanations like Yakov/Jacob
         text = re.sub(r'\\[a-z0-9+]+\*?|[@&*≈~]', ' ', text).replace("'", '’') # Remove markers and OET-RV special characters
         wordCounts.update(re.findall(r"(?<![\w’'-])[A-Z][\w’']*(?:[- ][A-Z][\w’']*)*", text))
-    print(f"  Found explanations for {len(explanations):,} names in the OET-RV ESFM files")
-    return explanations, wordCounts
-# end of harvestEsfmExplanations
+    print(f"  Counted {len(wordCounts):,} capitalised words in the OET-RV ESFM files")
+    return wordCounts
+# end of countEsfmWords
 
 
-def loadNames(esfmExplanations:dict[str,Counter], esfmWordCounts:Counter) -> dict[str,dict]:
+def loadNames(esfmWordCounts:Counter) -> dict[str,dict]:
     """
     Load the OET-RV names table and decide how to explain each name.
 
@@ -304,9 +299,9 @@ def loadNames(esfmExplanations:dict[str,Counter], esfmWordCounts:Counter) -> dic
                     and '(0)' not in row['Comment']] # '(0)' entries are name components and titles
         if not rows: continue
         if len({row['RVName'] for row in rows}) > 1: # Same traditional name maps to different RV names
-            flaggedRows = [row for row in rows if row['Explained'].strip()=='Y']
+            flaggedRows = list({row['RVName'].strip():row for row in rows if (row['CanonicalExplanation'] or '').strip()}.values()) # Rows repeat for each OT/NT/DC segment
             if len(flaggedRows) != 1:
-                skippedAmbiguous.append(f"{traditionalName}={'/'.join(row['RVName'] for row in rows)}")
+                skippedAmbiguous.append(f"{traditionalName}={'/'.join(dict.fromkeys(row['RVName'] for row in rows))}")
                 continue
             rows = flaggedRows # Use the main (explained) one
         row = rows[0]
@@ -315,21 +310,11 @@ def loadNames(esfmExplanations:dict[str,Counter], esfmWordCounts:Counter) -> dic
         if traditionalCount > MAX_TRADITIONAL_FRACTION * (traditionalCount + esfmCount(rvName)):
             skippedKept.append(traditionalName) # The OET-RV text often still uses the traditional form
             continue
-        isFlagged = row['Explained'].strip() == 'Y'
+        isFlagged = bool( (row['CanonicalExplanation'] or '').strip() )
         if EXPLAIN_ONLY_FLAGGED_NAMES and not isFlagged:
             explanation = None
         else:
-            explanation = traditionalName # Default
-            # See if the OET-RV ESFM files usually add a Greek form
-            grkExplanations = Counter()
-            for esfmExplanation,count in esfmExplanations.get(rvName, {}).items():
-                if esfmExplanation.startswith(f'{traditionalName}; Grk. '):
-                    grkExplanations[esfmExplanation] += count
-                elif esfmExplanation == traditionalName:
-                    grkExplanations[None] += count
-            if grkExplanations:
-                mostCommon = grkExplanations.most_common(1)[0][0]
-                if mostCommon: explanation = mostCommon
+            explanation = (row['NotesExplanation'] or '').strip() or traditionalName # e.g., 'Ahasuerus/Xerxes'
         names[traditionalName] = {'rvName':rvName, 'explanation':explanation, 'flagged':isFlagged}
     print(f"  Loaded {len(names):,} names to change from {NAMES_TABLE_FILEPATH.name}")
     if skippedKept:
@@ -355,7 +340,7 @@ def makeNamesRegex(names:dict[str,dict]) -> re.Pattern:
 
 
 def possessive(name:str) -> str:
-    """ Jesus -> Jesus’, John -> John’s, Grk. Yoannes -> Grk. Yoannes’ """
+    """ Jesus -> Jesus’, John -> John’s """
     return name + ('’' if name.endswith('s') else '’s')
 # end of possessive
 
@@ -374,10 +359,10 @@ class NameAdapter:
         and again if it hasn't been explained within the last EXPLAIN_WINDOW fields/lines.
 
     By default (for dictionaries and articles), names are changed to the OET-RV names,
-        e.g., 'Samuel' -> 'Shmuel (Samuel)' then just 'Shmuel'.
+        e.g., 'Samuel' -> 'Shmuel/Samuel' then just 'Shmuel'.
     If theirNameFirst is set (for notes that refer to their own translation, e.g., the NLT, ULT, or BSB),
-        their name is kept, with the OET-RV name after it on first use, e.g., 'Samuel (Shmuel)' then just 'Samuel',
-        and likewise for their terms, e.g., 'the LORD (Yahweh)'.
+        their name is kept, with the OET-RV name after it on first use, e.g., 'Samuel/Shmuel' then just 'Samuel',
+        and likewise (but in parentheses) for their terms, e.g., 'the LORD (Yahweh)'.
 
     Text quoted from other Bible versions (not ownVersions) can be left unchanged using adaptProtected().
     """
@@ -446,6 +431,7 @@ class NameAdapter:
     def adaptNames(self, text:str) -> str:
         result, lastEnd = [], 0
         for match in self.namesRE.finditer(text):
+            if match.start() < lastEnd: continue # Inside text that we already replaced, e.g., the 'Xerxes' in 'Ahasuerus (Xerxes)'
             matchedName = match.group(1)
             traditionalName = matchedName if matchedName in self.names else self.lowerNames.get(matchedName.lower())
             if traditionalName is None or not matchedName[0].isupper(): continue
@@ -459,11 +445,11 @@ class NameAdapter:
             if possessiveMatch and len(possessiveMatch.group(0)) == 1 \
             and (not matchedName.endswith('s') or text[max(0,match.start()-1):match.start()] in ('‘',"'")):
                 possessiveMatch = None # Not a possessive, e.g., ‘Jesus’ is (a closing quote)
-            endIndex = possessiveMatch.end() if possessiveMatch else match.end()
-            # See if the source already follows the name with a parenthesised alternative that we'd change to the same RV name
-            alreadyExplainedMatch, alternativeName = re.compile(r" \(([\w’' -]+)\)").match(text, endIndex), None
+            endIndex = nameEndIndex = possessiveMatch.end() if possessiveMatch else match.end()
+            # See if the source already follows the name with a parenthesised (or slashed) alternative that we'd change to the same RV name
+            alreadyExplainedMatch, alternativeName = ALTERNATIVE_NAME_RE.match(text, endIndex), None
             if alreadyExplainedMatch:
-                alternative = alreadyExplainedMatch.group(1)
+                alternative = alreadyExplainedMatch.group(1) or alreadyExplainedMatch.group(2)
                 if alternative == rvName: # e.g., 'Syria (Aram)'
                     endIndex = alreadyExplainedMatch.end()
                 elif alternative != traditionalName and self.names.get(alternative, {}).get('rvName') == rvName: # e.g., 'Ahasuerus (Xerxes)'
@@ -472,25 +458,26 @@ class NameAdapter:
             needsExplanation = info['explanation'] is not None \
                 and (alreadyExplainedMatch or self.lineNumber - self.lastExplainedLine.get(rvName, -9999) > EXPLAIN_WINDOW)
             ourName = rvName + ('’s' if possessiveMatch else '') # OET-RV uses 'Paulos's' (not 'Paulos'')
-            if self.theirNameFirst: # Keep their name, adding ours on first use, e.g., 'Samuel (Shmuel)'
+            if self.theirNameFirst: # Keep their name, adding ours on first use, e.g., 'Samuel/Shmuel'
                 if not needsExplanation: continue # Leave their name unchanged
                 self.lastExplainedLine[rvName] = self.lineNumber
                 if alreadyExplainedMatch and not alternativeName: continue # They already give our name, e.g., 'Syria (Aram)'
-                self.counts[f"NAME\t{traditionalName} → {traditionalName} ({rvName})"] += 1
-                if alternativeName: # e.g., 'Ahasuerus (Xerxes)' -> 'Ahasuerus (Xerxes; Ahashverosh)'
-                    rvText = f'{text[match.start():alreadyExplainedMatch.end()-1]}; {ourName})'
-                else: rvText = f'{text[match.start():endIndex]} ({ourName})'
-            else: # Change to our name, explaining it on first use, e.g., 'Shmuel (Samuel)'
+                self.counts[f"NAME\t{traditionalName} → {traditionalName}/{rvName}"] += 1
+                # e.g., 'Samuel’s' -> 'Samuel’s/Shmuel’s', 'Ahasuerus (Xerxes)' -> 'Ahasuerus/Ahashverosh (Xerxes)',
+                #   or 'Xerxes/Ahasuerus' -> 'Xerxes/Ahasuerus/Ahashverosh'
+                if alternativeName and alreadyExplainedMatch.group(2): rvText = f'{text[match.start():endIndex]}/{ourName}'
+                else: rvText = f'{text[match.start():nameEndIndex]}/{ourName}{text[nameEndIndex:endIndex]}'
+            else: # Change to our name, explaining it on first use, e.g., 'Shmuel/Samuel'
                 self.counts[f"NAME\t{traditionalName} → {rvName}"] += 1
                 rvText = ourName
                 if needsExplanation:
                     self.lastExplainedLine[rvName] = self.lineNumber
                     explanation = info['explanation']
-                    if alternativeName: # e.g., 'Ahashverosh (Ahasuerus/Xerxes)' like the OET-RV
+                    if alternativeName and alternativeName not in explanation.split('/'): # e.g., 'Ahashverosh/Ahasuerus/Xerxes'
                         explanation = explanation.replace(traditionalName, f'{traditionalName}/{alternativeName}', 1)
-                    if possessiveMatch: # e.g., 'Yeshua’s (Jesus’; Grk. Yesus’)'
-                        explanation = '; '.join(possessive(part) for part in explanation.split('; '))
-                    rvText = f'{rvText} ({explanation})'
+                    if possessiveMatch: # e.g., 'Yeshua’s/Jesus’'
+                        explanation = '/'.join(possessive(part) for part in explanation.split('/'))
+                    rvText = f'{rvText}/{explanation}'
             result.append(text[lastEnd:match.start()])
             result.append(rvText)
             lastEnd = endIndex
@@ -582,9 +569,9 @@ These adaptations are released under the same licence.
 These changes were made automatically by `adapt_uW_en_tn.py` (version {PROGRAM_VERSION})
 to match the [Open English Translation](https://github.com/Freely-Given-org/OpenEnglishTranslation--OET) Readers’ Version (OET-RV):
 
-- In the Note column, the OET-RV form of each name (from `OET-RV_names_table.tsv`) is given in parentheses
+- In the Note column, the OET-RV form of each name (from `OET-RV_names_table.tsv`) is given after a slash
   after the first use of the traditional name in each note (and again after about {EXPLAIN_WINDOW} lines of a long note),
-  e.g., ‘Samuel (Shmuel)’ then just ‘Samuel’. (The traditional names are kept because the notes refer to the ULT and UST.)
+  e.g., ‘Samuel/Shmuel’ then just ‘Samuel’. (The traditional names are kept because the notes refer to the ULT and UST.)
 - Other OET-RV wording was added in parentheses after the first use of their term in each note, e.g., ‘the LORD (Yahweh)’:
 """ + ''.join(f"  - {description}\n" for description in enabledRules) + """
 The original-language quotes, link targets, support references, Bible book names in references (e.g., ‘John 1:19’),
@@ -602,7 +589,7 @@ See `adaptation_log.tsv` for the number of times each change was made.
 def main() -> None:
     print(f"{PROGRAM_NAME} v{PROGRAM_VERSION} ({LAST_MODIFIED_DATE})")
     tsvPaths = copySourceFiles()
-    names = loadNames(*harvestEsfmExplanations())
+    names = loadNames(countEsfmWords())
     namesRE = makeNamesRegex(names)
     counts = Counter()
     adapter = NameAdapter(names, namesRE, counts, theirNameFirst=True, ownVersions=OWN_VERSIONS)
