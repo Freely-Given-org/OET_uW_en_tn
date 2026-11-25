@@ -7,7 +7,7 @@ These adaptations are released under the same licence.
 
 ## Changes made
 
-These changes were made automatically by `adapt_uW_en_tn.py` (version 0.50)
+These changes were made automatically by `adapt_uW_en_tn.py` (version 0.51)
 to match the [Open English Translation](https://github.com/Freely-Given-org/OpenEnglishTranslation--OET) Readers’ Version (OET-RV):
 
 - In the Note column, the OET-RV form of each name (from `OET-RV_names_table.tsv`) is given after a slash
@@ -19,3 +19,9 @@ to match the [Open English Translation](https://github.com/Freely-Given-org/Open
 The original-language quotes, link targets, support references, Bible book names in references (e.g., ‘John 1:19’),
 and text quoted from other Bible versions (e.g., ‘“…” (NIV)’) were not changed.
 See `adaptation_log.tsv` for the number of times each change was made.
+
+## Corrections
+
+These errors in the original files were also corrected:
+
+- `tn_JER.tsv`: a broken link to Jeremiah 5:11 (with stray backslashes) in a 5:15 note was fixed
